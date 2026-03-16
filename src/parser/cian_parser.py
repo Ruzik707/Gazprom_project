@@ -6,6 +6,11 @@ import re
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
+import random
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class CianParser:
     def __init__(self):
@@ -26,15 +31,91 @@ class CianParser:
         self.session.headers.update(headers)
         self.data_file = Path(__file__).parent.parent.parent  /'data'/'raw'/'cian_offers.jsonl'
 
-    def get_offer_ids(self, page):
+    def generate_search_tasks(self):
+        tasks = []
+        base_query = {
+            "_type": "flatsale",
+            "engine_version": {"type": "term", "value": 2},
+        }
+
+        districts = [
+        {"name": "ЦАО", "id": 4},
+        {"name": "САО", "id": 5},
+        {"name": "СВАО", "id": 6},
+        {"name": "ВАО", "id": 7},
+        {"name": "ЮВАО", "id": 8},
+        {"name": "ЮАО", "id": 9},
+        {"name": "ЮЗАО", "id": 10},
+        {"name": "ЗАО", "id": 11},
+        {"name": "СЗАО", "id": 1},
+        {"name": "ЗелАО", "id": 151},
+        {"name": "НАО", "id": 325},
+        {"name": "ТАО", "id": 326}
+        ]
+
+        object_types = [1, 2]
+
+        room_values = {
+            "studio": [9],
+            "1": [1],
+            "2": [2],
+            "3": [3],
+            "4": [4]
+        }
+
+        price_ranges = [
+            (5000000, 8000000),
+            (8000000, 10000000),
+            (10000000, 12000000),
+            (12000000, 15000000),
+            (15000000, 20000000),
+            (20000000, 30000000),
+            (30000000, 50000000),
+            (50000000, 100000000),
+            (100000000, 200000000)
+        ]
+
+        for district in districts:
+            for obj_type in object_types:
+                for room_label, room_list in room_values.items():
+                    for price_from, price_to in price_ranges:
+                        query = base_query.copy()
+                        query["geo"] = {
+                            "type": "geo",
+                            "value": [{"type": "district", "id": district["id"]}]
+                        }
+                        query["object_type"] = {"type": "terms", "value": [obj_type]}
+                        query["room"] = {"type": "terms", "value": room_list}
+                        query["price"] = {"type": "range", "value": {"from": price_from, "to": price_to}}
+                        tasks.append(query)
+        return tasks
+
+    def _build_query_string(self, task, district_id):
+        parts = [
+            "deal_type=sale",
+            "engine_version=2",
+            "offer_type=flat",
+            f"district%5B0%5D={district_id}"
+        ]
+        if 'room' in task:
+            room_val = task['room']['value'][0]
+            parts.append(f"room%5B0%5D={room_val}")
+        if 'price' in task:
+            parts.append(f"minprice={task['price']['value']['from']}")
+            parts.append(f"maxprice={task['price']['value']['to']}")
+        if 'object_type' in task:
+            obj_type = task['object_type']['value'][0]
+            parts.append(f"object_type%5B0%5D={obj_type}")
+        return "&".join(parts)
+
+    def get_offer_ids_by_task(self, task, page):
         url = 'https://api.cian.ru/search-offers/v1/get-infinite-search-result-desktop/'
-        payload = {"jsonQuery": {
-                        "_type":"flatsale",
-                        "engine_version": {"type": "term","value": 2},
-                        "region": {"type": "terms", "value": [1]}
-                  },
-                  "queryString": "deal_type=sale&engine_version=2&offer_type=flat&region=1",
-                  "pageNumber": page}
+        district_id = task['geo']['value'][0]['id']
+        payload = {
+            "jsonQuery": task,
+            "queryString": self._build_query_string(task, district_id),
+            "pageNumber": page
+        }
 
         try:
             response = self.session.post(url, json=payload, timeout=15)
@@ -52,7 +133,7 @@ class CianParser:
             return response.text
         except Exception as e:
             print(f'Ошибка загрузки страницы с ID {offer_id}: {e}')
-            return []
+            return None
 
     def _parse_ldjson(self, soup):
 
@@ -115,29 +196,31 @@ class CianParser:
             return ' '.join(addr_tag.stripped_strings).replace('На карте', '').strip()
         return ''
 
-    def _geocode_address(self, address):
+    def _geocode_address(self, address: str) -> list | None:
         if not address:
             return None
-        url = "https://geocode-maps.yandex.ru/1.x/"
+        url = "https://nominatim.openstreetmap.org/search"
         params = {
-            "apikey": "a8e99da4-0a44-4277-a614-9c989cd1ca9b",
-            "geocode": address,
+            "q": address,
             "format": "json",
-            "results": 1
+            "limit": 1
+        }
+        headers = {
+            "User-Agent": "CianParser/1.0 (R89061187131@gmail.com)"
         }
         try:
-            resp = requests.get(url, params=params, timeout=10)
+            resp = requests.get(url, params=params, headers=headers, timeout=10)
             resp.raise_for_status()
             data = resp.json()
-            feature_member = data['response']['GeoObjectCollection']['featureMember']
-            if not feature_member:
-                return None
-            pos = feature_member[0]['GeoObject']['Point']['pos']
-            lon, lat = map(float, pos.split())
-            return [lat, lon]
+            if data:
+                lat = float(data[0]['lat'])
+                lon = float(data[0]['lon'])
+                return [lat, lon]
         except Exception as e:
-            print(f"Ошибка геокодирования адреса '{address}': {e}")
-            return None
+            print(f"Ошибка Nominatim: {e}")
+        finally:
+            time.sleep(1)
+        return None
 
     def _parse_underground(self, soup):
         metros = []
@@ -201,7 +284,9 @@ class CianParser:
         address = self._parse_address(soup)
         if address:
             result['address'] = address
-            result['coordinates'] = self._geocode_address(address)
+            lst = address.split(',')
+            address_for_geocode = ' '.join(lst[-2:] + [lst[0]])
+            result['coordinates'] = self._geocode_address(address_for_geocode)
         metros = self._parse_underground(soup)
         if metros:
             result['metros'] = metros
@@ -212,25 +297,42 @@ class CianParser:
         return result
 
     def get_offer_details(self, offer_id):
+        time.sleep(random.uniform(2, 3))
         html = self.get_offer_page(offer_id)
         if html:
             return self._parse_offer_page(html)
         return {}
 
-    def collect_offers(self, max_pages=5, max_workers=3):
-        all_ids = []
-        for page in range(1, max_pages + 1):
-            ids = self.get_offer_ids(page)
-            if not ids:
-                print(f"На странице {page} нет ID, завершаем.")
-                break
-            all_ids.extend(ids)
-            time.sleep(2)
+    def collect_all_ids(self):
+        all_ids = set()
+        tasks = self.generate_search_tasks()
+        for task_idx, task in enumerate(tasks):
+            print(f"Задача {task_idx+1}/{len(tasks)}: {task}")
+            page = 1
+            while True:
+                ids = self.get_offer_ids_by_task(task, page)
+                if not ids:
+                    break
+                before = len(all_ids)
+                all_ids.update(ids)
+                added = len(all_ids) - before
+                print(f"  Страница {page}: добавилось {len(all_ids) - before} ID")
 
+                if added == 0:
+                    break
+
+                page += 1
+                time.sleep(random.uniform(2, 3))
+
+        print(f"Всего собрано уникальных ID: {len(all_ids)}")
+        return list(all_ids)
+
+    def collect_offers(self, max_workers=3):
+        ids = self.collect_all_ids()
         all_offers = []
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_id = {executor.submit(self.get_offer_details, oid): oid for oid in all_ids}
-            for future in tqdm(as_completed(future_to_id), total=len(all_ids), desc="Загрузка объявлений"):
+            future_to_id = {executor.submit(self.get_offer_details, oid): oid for oid in ids}
+            for future in tqdm(as_completed(future_to_id), total=len(ids), desc="Загрузка объявлений"):
                 oid = future_to_id[future]
                 try:
                     details = future.result()
@@ -243,11 +345,15 @@ class CianParser:
         return all_offers
 
     def save_offers_in_jsonl(self, datas):
+        self.data_file.parent.mkdir(parents=True, exist_ok=True)
+
+        old_ids = set()
         if self.data_file.exists():
             with open(self.data_file, 'r', encoding='utf-8') as file:
-                old_ids = {json.loads(line)['id'] for line in file}
-        else:
-            old_ids = {}
+                for line in file:
+                    line = line.strip()
+                    if line:
+                        old_ids.add(json.loads(line)['id'])
 
         new_offers = []
         for offer in datas:
@@ -255,9 +361,12 @@ class CianParser:
                 new_offers.append(offer)
 
         if new_offers:
-            with open('../../data/raw/cian_offers.jsonl', 'a', encoding='utf-8') as file:
+            with open(self.data_file, 'a', encoding='utf-8') as file:
                 for item in new_offers:
                     file.write(json.dumps(item, ensure_ascii=False) + '\n')
+            print(f"✅ Добавлено {len(new_offers)} новых объявлений")
+        else:
+            print("Новых объявлений нет")
 
     def download_photos(self, urls):
         pass
@@ -268,6 +377,5 @@ class CianParser:
 
 if __name__ == '__main__':
     parser = CianParser()
-
-    offers = parser.collect_offers(1)
+    offers = parser.collect_offers()
     parser.save_offers_in_jsonl(offers)
