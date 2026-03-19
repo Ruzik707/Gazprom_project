@@ -7,35 +7,28 @@ from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 import random
-import os
 from dotenv import load_dotenv
+from playwright.sync_api import sync_playwright
 
 load_dotenv()
 
 class CianParser:
-    def __init__(self):
-        self.session = requests.Session(impersonate='chrome')
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 YaBrowser/25.12.0.0 Safari/537.36',
-            'Accept': '*/*',
-            'Content-Type': 'application/json',
-            'Origin': 'https://www.cian.ru',
-            'Referer': 'https://www.cian.ru/',
-            'Sec-Ch-Ua': '"Chromium";v="142", "YaBrowser";v="25.12", "Not_A_Brand";v="99", "Yowser";v="2.5"',
-            'Sec-Ch-Ua-Mobile': '?',
-            'Sec-Ch-Ua-Platform': '"Linux"',
-            'Sec-Fetch-Dest': 'empty',
-            'Sec-Fetch-Mode': 'cors',
-            'Sec-Fetch-Site': 'same-site'
-            }
-        self.session.headers.update(headers)
+    def __init__(self, headless=True):
         self.data_file = Path(__file__).parent.parent.parent  /'data'/'raw'/'cian_offers.jsonl'
+
+        self.playwright = sync_playwright().start()
+        self.browser = self.playwright.chromium.launch(headless=headless)
+        self.context = self.browser.new_context(
+            user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        )
+        self.page = self.context.new_page()
 
     def generate_search_tasks(self):
         tasks = []
         base_query = {
             "_type": "flatsale",
             "engine_version": {"type": "term", "value": 2},
+            'currency': {'type': 'term', 'value': 2}
         }
 
         districts = [
@@ -53,21 +46,19 @@ class CianParser:
         {"name": "ТАО", "id": 326}
         ]
 
-        object_types = [1, 2]
-
-        room_values = {
-            "studio": [9],
-            "1": [1],
-            "2": [2],
-            "3": [3],
-            "4": [4]
-        }
+        room_groups = [
+            {"name": "studio", "values": [9]},
+            {"name": "1", "values": [1]},
+            {"name": "2", "values": [2]},
+            {"name": "3", "values": [3]},
+            {"name": "4", "values": [4]},
+            {"name": "5", "values": [5]},
+            {"name": "6", "values": [6]}
+        ]
 
         price_ranges = [
-            (5000000, 8000000),
-            (8000000, 10000000),
-            (10000000, 12000000),
-            (12000000, 15000000),
+            (5000000, 10000000),
+            (10000000, 15000000),
             (15000000, 20000000),
             (20000000, 30000000),
             (30000000, 50000000),
@@ -76,64 +67,43 @@ class CianParser:
         ]
 
         for district in districts:
-            for obj_type in object_types:
-                for room_label, room_list in room_values.items():
-                    for price_from, price_to in price_ranges:
-                        query = base_query.copy()
-                        query["geo"] = {
-                            "type": "geo",
-                            "value": [{"type": "district", "id": district["id"]}]
-                        }
-                        query["object_type"] = {"type": "terms", "value": [obj_type]}
-                        query["room"] = {"type": "terms", "value": room_list}
-                        query["price"] = {"type": "range", "value": {"from": price_from, "to": price_to}}
-                        tasks.append(query)
+            for room_group in room_groups:
+                for price_from, price_to in price_ranges:
+                    query = base_query.copy()
+                    query["price"] = {
+                        "type": "range",
+                        "value": {"gte": price_from, "lte": price_to}
+                    }
+                    query["geo"] = {
+                        "type": "geo",
+                        "value": [{"type": "district", "id": district["id"]}]
+                    }
+                    query["room"] = {"type": "terms", "value": room_group["values"]}
+                    tasks.append(query)
         return tasks
 
-    def _build_query_string(self, task, district_id):
+    def _build_query_string(self, task, district_id, page):
         parts = [
+            "currency=2",
             "deal_type=sale",
+            f"district%5B0%5D={district_id}",
             "engine_version=2",
-            "offer_type=flat",
-            f"district%5B0%5D={district_id}"
+
         ]
-        if 'room' in task:
-            room_val = task['room']['value'][0]
-            parts.append(f"room%5B0%5D={room_val}")
+        if page > 1:
+            parts.append(f'p={page}')
         if 'price' in task:
-            parts.append(f"minprice={task['price']['value']['from']}")
-            parts.append(f"maxprice={task['price']['value']['to']}")
-        if 'object_type' in task:
-            obj_type = task['object_type']['value'][0]
-            parts.append(f"object_type%5B0%5D={obj_type}")
+            price_val = task['price']['value']
+            if 'lte' in price_val:
+                parts.append(f"maxprice={price_val['lte']}")
+            if 'gte' in price_val:
+                parts.append(f"minprice={price_val['gte']}")
+        parts.append("offer_type=flat")
+        if 'room' in task:
+            for room_val in task['room']['value']:
+                parts.append(f"room{room_val}=1")
+
         return "&".join(parts)
-
-    def get_offer_ids_by_task(self, task, page):
-        url = 'https://api.cian.ru/search-offers/v1/get-infinite-search-result-desktop/'
-        district_id = task['geo']['value'][0]['id']
-        payload = {
-            "jsonQuery": task,
-            "queryString": self._build_query_string(task, district_id),
-            "pageNumber": page
-        }
-
-        try:
-            response = self.session.post(url, json=payload, timeout=15)
-            response.raise_for_status()
-            return [item['itemId'] for item in response.json()['infiniteSearchResult']]
-        except Exception as e:
-            print(f'Ошибка при получении ID на странице {page}: {e}')
-            return []
-
-    def get_offer_page(self, offer_id):
-        url = f"https://www.cian.ru/sale/flat/{offer_id}/"
-        try:
-            response = self.session.get(url, timeout=15)
-            response.raise_for_status()
-            return response.text
-        except Exception as e:
-            print(f'Ошибка загрузки страницы с ID {offer_id}: {e}')
-            return None
 
     def _parse_ldjson(self, soup):
 
@@ -296,38 +266,120 @@ class CianParser:
 
         return result
 
-    def get_offer_details(self, offer_id):
-        time.sleep(random.uniform(2, 3))
-        html = self.get_offer_page(offer_id)
-        if html:
-            return self._parse_offer_page(html)
-        return {}
+    def get_ids_from_page(self, url):
+        try:
+            self.page.goto(url, wait_until='load', timeout=30000)
+
+            last_count = 0
+            while True:
+                self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+
+                try:
+                    self.page.wait_for_function(
+                        f'document.querySelectorAll("div[data-testid=\'offer-card\']").length > {last_count}',
+                        timeout=3000)
+                except:
+                    pass
+
+                cards = self.page.query_selector_all('div[data-testid="offer-card"]')
+                current_count = len(cards)
+                if current_count == last_count:
+                    try:
+                        self.page.wait_for_selector(
+                            '#frontend-serp > div > div > div:nth-child(6) > div.x31de4314--fb02f2--moreSuggestionsButtonContainer > a',
+                            timeout=2000
+                        )
+                        show_more = self.page.query_selector(
+                            '#frontend-serp > div > div > div:nth-child(6) > div.x31de4314--fb02f2--moreSuggestionsButtonContainer > a'
+                        )
+                    except:
+                        show_more = None
+
+                    if not show_more:
+                        show_more = self.page.query_selector('a:has-text("Показать ещё")')
+                    if show_more:
+                        show_more.click()
+                        try:
+                            self.page.wait_for_function(
+                                f'document.querySelectorAll("div[data-testid=\'offer-card\']").length > {current_count}',
+                                timeout=7000
+                            )
+                            cards = self.page.query_selector_all('div[data-testid="offer-card"]')
+                            last_count = len(cards)
+                            continue
+                        except:
+                            break
+                    else:
+                        break
+                last_count = current_count
+
+            ids = set()
+            for card in cards:
+                link = card.query_selector('a[href*="/sale/flat/"]')
+                if link:
+                    href = link.get_attribute('href')
+                    match = re.search(r'/sale/flat/(\d+)', href)
+                    if match:
+                        ids.add(match.group(1))
+            return list(ids)
+        except Exception as e:
+            print(f"Ошибка при загрузке {url}: {e}")
+            return []
+
+    def close(self):
+        self.browser.close()
+        self.playwright.stop()
 
     def collect_all_ids(self):
         all_ids = set()
         tasks = self.generate_search_tasks()
         for task_idx, task in enumerate(tasks):
             print(f"Задача {task_idx+1}/{len(tasks)}: {task}")
+            district_id = task['geo']['value'][0]['id']
             page = 1
             while True:
-                ids = self.get_offer_ids_by_task(task, page)
+                url = f"https://www.cian.ru/cat.php?{self._build_query_string(task, district_id, page)}"
+                print(f"  Загружаем страницу {page}: {url}")
+                start = time.time()
+                ids = self.get_ids_from_page(url)
                 if not ids:
+                    print("  На странице нет объявлений, завершаем пагинацию.")
                     break
                 before = len(all_ids)
                 all_ids.update(ids)
                 added = len(all_ids) - before
-                print(f"  Страница {page}: добавилось {len(all_ids) - before} ID")
+                print(f"  Страница {page}: добавилось {added} новых ID, всего {len(all_ids)}. Работало {time.time() - start:.0f} секунд")
 
-                if added == 0:
+                next_page_link = self.page.query_selector(f'a[href*="p={page + 1}"]')
+                if not next_page_link:
+                    print("  Следующая страница не найдена, завершаем.")
                     break
 
                 page += 1
-                time.sleep(random.uniform(2, 3))
-
+                time.sleep(random.uniform(1, 2))
+            time.sleep(random.uniform(1, 2))
         print(f"Всего собрано уникальных ID: {len(all_ids)}")
         return list(all_ids)
 
-    def collect_offers(self, max_workers=3):
+    def get_offer_page(self, offer_id):
+        url = f"https://www.cian.ru/sale/flat/{offer_id}/"
+
+        with requests.Session(impersonate='chrome') as session:
+            try:
+                response = session.get(url, timeout=15)
+                response.raise_for_status()
+                return response.text
+            except Exception as e:
+                print(f'Ошибка загрузки страницы с ID {offer_id}: {e}')
+                return None
+
+    def get_offer_details(self, offer_id):
+        html = self.get_offer_page(offer_id)
+        if html:
+            return self._parse_offer_page(html)
+        return {}
+
+    def collect_offers(self, max_workers=7):
         ids = self.collect_all_ids()
         all_offers = []
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -368,14 +420,14 @@ class CianParser:
         else:
             print("Новых объявлений нет")
 
-    def download_photos(self, urls):
-        pass
-
 
 
 
 
 if __name__ == '__main__':
     parser = CianParser()
-    offers = parser.collect_offers()
-    parser.save_offers_in_jsonl(offers)
+    try:
+        offers = parser.collect_offers()
+        parser.save_offers_in_jsonl(offers)
+    finally:
+        parser.close()
