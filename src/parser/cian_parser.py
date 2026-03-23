@@ -12,6 +12,7 @@ from playwright.sync_api import sync_playwright
 
 load_dotenv()
 
+
 class CianParser:
     def __init__(self, headless=True):
         self.data_file = Path(__file__).parent.parent.parent  /'data'/'raw'/'cian_offers.jsonl'
@@ -22,6 +23,7 @@ class CianParser:
             user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         )
         self.page = self.context.new_page()
+        self.session = requests.Session(impersonate='chrome120')
 
     def generate_search_tasks(self):
         tasks = []
@@ -33,33 +35,31 @@ class CianParser:
 
         districts = [
         {"name": "ЦАО", "id": 4},
-        {"name": "САО", "id": 5},
-        {"name": "СВАО", "id": 6},
-        {"name": "ВАО", "id": 7},
-        {"name": "ЮВАО", "id": 8},
-        {"name": "ЮАО", "id": 9},
-        {"name": "ЮЗАО", "id": 10},
-        {"name": "ЗАО", "id": 11},
-        {"name": "СЗАО", "id": 1},
-        {"name": "ЗелАО", "id": 151},
-        {"name": "НАО", "id": 325},
-        {"name": "ТАО", "id": 326}
+        # {"name": "САО", "id": 5},
+        # {"name": "СВАО", "id": 6},
+        # {"name": "ВАО", "id": 7},
+        # {"name": "ЮВАО", "id": 8},
+        # {"name": "ЮАО", "id": 9},
+        # {"name": "ЮЗАО", "id": 10},
+        # {"name": "ЗАО", "id": 11},
+        # {"name": "СЗАО", "id": 1},
+        # {"name": "ЗелАО", "id": 151},
+        # {"name": "НАО", "id": 325},
+        # {"name": "ТАО", "id": 326}
         ]
 
         room_groups = [
-            {"name": "studio", "values": [9]},
+            # {"name": "studio", "values": [9]},
             {"name": "1", "values": [1]},
-            {"name": "2", "values": [2]},
-            {"name": "3", "values": [3]},
-            {"name": "4", "values": [4]},
-            {"name": "5", "values": [5]},
-            {"name": "6", "values": [6]}
+            # {"name": "2", "values": [2]},
+            # {"name": "3", "values": [3]},
+            # {"name": "4", "values": [4]},
+            # {"name": "5", "values": [5]}
         ]
 
         price_ranges = [
             (5000000, 10000000),
-            (10000000, 15000000),
-            (15000000, 20000000),
+            (10000000, 20000000),
             (20000000, 30000000),
             (30000000, 50000000),
             (50000000, 100000000),
@@ -81,6 +81,8 @@ class CianParser:
                     query["room"] = {"type": "terms", "value": room_group["values"]}
                     tasks.append(query)
         return tasks
+
+
 
     def _build_query_string(self, task, district_id, page):
         parts = [
@@ -105,8 +107,9 @@ class CianParser:
 
         return "&".join(parts)
 
-    def _parse_ldjson(self, soup):
 
+
+    def _parse_ldjson(self, soup):
         ld_json_tag = soup.find('script', type='application/ld+json')
         result = {}
         if not ld_json_tag:
@@ -130,6 +133,8 @@ class CianParser:
         except Exception as e:
             print(f"Ошибка парсинга ld+json: {e}")
             return {}
+
+
 
     def _parse_factoids(self, soup):
         result = {}
@@ -175,9 +180,7 @@ class CianParser:
             "format": "json",
             "limit": 1
         }
-        headers = {
-            "User-Agent": "CianParser/1.0 (R89061187131@gmail.com)"
-        }
+        headers = {"User-Agent": "CianParser/1.0 (R89061187131@gmail.com)"}
         try:
             resp = requests.get(url, params=params, headers=headers, timeout=10)
             resp.raise_for_status()
@@ -191,6 +194,8 @@ class CianParser:
         finally:
             time.sleep(1)
         return None
+
+
 
     def _parse_underground(self, soup):
         metros = []
@@ -209,6 +214,8 @@ class CianParser:
             minutes = int(re.search(r'\d+', time_text).group()) if time_text else None
             metros.append({'name': name, 'time': minutes})
         return metros
+
+
 
     def _parse_features(self, soup):
         features = {}
@@ -245,6 +252,8 @@ class CianParser:
 
         return results
 
+
+
     def _parse_offer_page(self, html):
         soup = BeautifulSoup(html, 'lxml')
         result = {}
@@ -254,64 +263,60 @@ class CianParser:
         address = self._parse_address(soup)
         if address:
             result['address'] = address
-            lst = address.split(',')
-            address_for_geocode = ' '.join(lst[-2:] + [lst[0]])
-            result['coordinates'] = self._geocode_address(address_for_geocode)
+            # lst = address.split(',')
+            # address_for_geocode = ' '.join(lst[-2:] + [lst[0]])
+            # result['coordinates'] = self._geocode_address(address_for_geocode)
         metros = self._parse_underground(soup)
         if metros:
             result['metros'] = metros
-        if 'price' in result and 'area_total' in result:
+        if 'price' in result and 'area_total' in result and result['area_total'] > 0:
             result['price_per_m2'] = round(result['price'] / result['area_total'])
         result.update(self._parse_features(soup))
 
         return result
 
+
+
     def get_ids_from_page(self, url):
         try:
-            self.page.goto(url, wait_until='load', timeout=30000)
+            self.page.goto(url, wait_until='domcontentloaded', timeout=15000)
+            if self.page.query_selector('text=Ничего не найдено'):
+                return []
+            self.page.wait_for_selector('div[data-testid="offer-card"]', timeout=5000)
 
             last_count = 0
             while True:
                 self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-
-                try:
-                    self.page.wait_for_function(
-                        f'document.querySelectorAll("div[data-testid=\'offer-card\']").length > {last_count}',
-                        timeout=3000)
-                except:
-                    pass
+                time.sleep(0.6)
 
                 cards = self.page.query_selector_all('div[data-testid="offer-card"]')
                 current_count = len(cards)
+
                 if current_count == last_count:
-                    try:
-                        self.page.wait_for_selector(
-                            '#frontend-serp > div > div > div:nth-child(6) > div.x31de4314--fb02f2--moreSuggestionsButtonContainer > a',
-                            timeout=2000
-                        )
+                    show_more = self.page.query_selector('a:has-text("Показать ещё"), button:has-text("Показать ещё")')
+                    if not show_more:
                         show_more = self.page.query_selector(
                             '#frontend-serp > div > div > div:nth-child(6) > div.x31de4314--fb02f2--moreSuggestionsButtonContainer > a'
                         )
-                    except:
-                        show_more = None
-
-                    if not show_more:
-                        show_more = self.page.query_selector('a:has-text("Показать ещё")')
                     if show_more:
                         show_more.click()
                         try:
                             self.page.wait_for_function(
                                 f'document.querySelectorAll("div[data-testid=\'offer-card\']").length > {current_count}',
-                                timeout=7000
+                                timeout=1500
                             )
-                            cards = self.page.query_selector_all('div[data-testid="offer-card"]')
+                        except:
+                            pass
+                        cards = self.page.query_selector_all('div[data-testid="offer-card"]')
+                        if len(cards) > current_count:
                             last_count = len(cards)
                             continue
-                        except:
+                        else:
                             break
                     else:
                         break
-                last_count = current_count
+                else:
+                    last_count = current_count
 
             ids = set()
             for card in cards:
@@ -326,9 +331,13 @@ class CianParser:
             print(f"Ошибка при загрузке {url}: {e}")
             return []
 
+
+
     def close(self):
         self.browser.close()
         self.playwright.stop()
+
+
 
     def collect_all_ids(self):
         all_ids = set()
@@ -356,22 +365,42 @@ class CianParser:
                     break
 
                 page += 1
-                time.sleep(random.uniform(1, 2))
-            time.sleep(random.uniform(1, 2))
         print(f"Всего собрано уникальных ID: {len(all_ids)}")
         return list(all_ids)
 
-    def get_offer_page(self, offer_id):
-        url = f"https://www.cian.ru/sale/flat/{offer_id}/"
 
-        with requests.Session(impersonate='chrome') as session:
-            try:
-                response = session.get(url, timeout=15)
-                response.raise_for_status()
-                return response.text
-            except Exception as e:
-                print(f'Ошибка загрузки страницы с ID {offer_id}: {e}')
-                return None
+
+    def get_offer_page(self, offer_id):
+        time.sleep(random.uniform(2, 3))
+        url = f"https://www.cian.ru/sale/flat/{offer_id}/"
+        headers = {
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0',
+            'Referer': 'https://www.cian.ru/',
+        }
+        user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        ]
+        headers['User-Agent'] = random.choice(user_agents)
+        try:
+            response = self.session.get(url, headers=headers, timeout=20)
+            response.raise_for_status()
+            return response.text
+        except Exception as e:
+            print(f'Ошибка загрузки ID {offer_id}: {e}')
+            return None
+
+
 
     def get_offer_details(self, offer_id):
         html = self.get_offer_page(offer_id)
@@ -379,8 +408,12 @@ class CianParser:
             return self._parse_offer_page(html)
         return {}
 
-    def collect_offers(self, max_workers=7):
+
+
+    def collect_offers(self, max_workers=2):
+        start_1 = time.time()
         ids = self.collect_all_ids()
+        print(f'Сборка id работала {(time.time() - start_1)/60:.2f} минут')
         all_offers = []
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_id = {executor.submit(self.get_offer_details, oid): oid for oid in ids}
@@ -393,8 +426,11 @@ class CianParser:
                 except Exception as e:
                     print(f"Ошибка при обработке ID {oid}: {e}")
 
-        print(f"Успешно собрано объявлений: {len(all_offers)}")
+        print(f"Успешно собрано объявлений: {len(all_offers)}.")
+        print(f"Полная сборка работала {(time.time() - start_1) / 60:.2f} минут.")
         return all_offers
+
+
 
     def save_offers_in_jsonl(self, datas):
         self.data_file.parent.mkdir(parents=True, exist_ok=True)
