@@ -1,0 +1,31 @@
+import pandera.pandas as pa
+
+CianSchema = pa.DataFrameSchema(
+    columns={
+        "id": pa.Column(int, unique=True, nullable=False),
+        "price": pa.Column(int, nullable=False),
+        "offer_description": pa.Column(str, nullable=False),
+        "area_total": pa.Column(float, nullable=True, checks=pa.Check.ge(0)),
+        "area_living": pa.Column(float, nullable=True, checks=pa.Check.ge(0)),
+        "area_kitchen": pa.Column(float, nullable=True, checks=pa.Check.ge(0)),
+        "floor": pa.Column(int, nullable=True, checks=pa.Check.ge(0)),
+        "floors_total": pa.Column(int, nullable=True, checks=pa.Check.ge(0)),
+        "construction_year": pa.Column(float, nullable=True),
+        "address": pa.Column(str, nullable=True),
+        "metros": pa.Column(object, nullable=True),
+        "flat_type": pa.Column(str, nullable=True),
+        "renovation_type": pa.Column(str, nullable=True),
+        "accident_rate": pa.Column(str, nullable=True),
+        "heating": pa.Column(str, nullable=True),
+        "entrances": pa.Column(float, nullable=True, checks=pa.Check.ge(0)),
+        "bathroom": pa.Column(str, nullable=True),
+        "house_type": pa.Column(str, nullable=True),
+        "ceiling_height": pa.Column(float, nullable=True, checks=pa.Check.ge(0)),
+        "parking": pa.Column(str, nullable=True),
+        "elevators": pa.Column(str, nullable=True),
+        "rooms": pa.Column(float, nullable=True, checks=pa.Check.ge(0)),
+        "photo_keys": pa.Column(object, nullable=True),
+    },
+    strict=False,
+    coerce=True,
+)
