@@ -2,6 +2,10 @@ import json
 import time
 from curl_cffi import requests
 from pathlib import Path
+import os
+import boto3
+from botocore.config import Config
+from io import  BytesIO
 import re
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -17,13 +21,20 @@ class CianParser:
     def __init__(self, headless=True):
         self.data_file = Path(__file__).parent.parent.parent  /'data'/'raw'/'cian_offers.jsonl'
 
+        self.s3_client = boto3.client(
+            's3',
+            endpoint_url=os.getenv("S3_ENDPOINT_URL"),
+            aws_access_key_id=os.getenv("S3_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.getenv("S3_SECRET_ACCESS_KEY"),
+            config=Config(signature_version='s3v4')
+        )
+        self.bucket_name = os.getenv("S3_BUCKET_NAME")
         self.playwright = sync_playwright().start()
         self.browser = self.playwright.chromium.launch(headless=headless)
         self.context = self.browser.new_context(
             user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         )
         self.page = self.context.new_page()
-        self.session = requests.Session(impersonate='chrome120')
 
     def generate_search_tasks(self):
         tasks = []
@@ -34,7 +45,7 @@ class CianParser:
         }
 
         districts = [
-        {"name": "ЦАО", "id": 4},
+        # {"name": "ЦАО", "id": 4},
         # {"name": "САО", "id": 5},
         # {"name": "СВАО", "id": 6},
         # {"name": "ВАО", "id": 7},
@@ -43,18 +54,18 @@ class CianParser:
         # {"name": "ЮЗАО", "id": 10},
         # {"name": "ЗАО", "id": 11},
         # {"name": "СЗАО", "id": 1},
-        # {"name": "ЗелАО", "id": 151},
-        # {"name": "НАО", "id": 325},
-        # {"name": "ТАО", "id": 326}
+        {"name": "ЗелАО", "id": 151},
+        {"name": "НАО", "id": 325},
+        {"name": "ТАО", "id": 326}
         ]
 
         room_groups = [
-            # {"name": "studio", "values": [9]},
+            {"name": "studio", "values": [9]},
             {"name": "1", "values": [1]},
-            # {"name": "2", "values": [2]},
-            # {"name": "3", "values": [3]},
-            # {"name": "4", "values": [4]},
-            # {"name": "5", "values": [5]}
+            {"name": "2", "values": [2]},
+            {"name": "3", "values": [3]},
+            {"name": "4", "values": [4]},
+            {"name": "5", "values": [5]}
         ]
 
         price_ranges = [
@@ -109,6 +120,46 @@ class CianParser:
 
 
 
+    def upload_photo_to_b2(self, photo_url, offer_id, photo_index):
+        try:
+            response = requests.get(photo_url, timeout=20, stream=True)
+            response.raise_for_status()
+
+            file_obj = BytesIO(response.content)
+            s3_key = f"cian/photos/{offer_id}/{photo_index}.jpg"
+
+            self.s3_client.upload_fileobj(
+                file_obj,
+                self.bucket_name,
+                s3_key
+            )
+            return s3_key
+        except Exception as e:
+            print(f"Ошибка загрузки фото {photo_url}: {e}")
+            return None
+
+    def generate_presigned_url(self, key, expiration=3600):
+        try:
+            url = self.s3_client.generate_presigned_url(
+                'get_object',
+                Params={'Bucket': self.bucket_name, 'Key': key},
+                ExpiresIn=expiration
+            )
+            return url
+        except Exception as e:
+            print(f"Ошибка генерации ссылки для {key}: {e}")
+            return None
+
+    def get_photo_urls(self, offer_id):
+        with open(self.data_file, 'r') as f:
+            for line in f:
+                offer = json.loads(line)
+                if offer['id'] == offer_id:
+                    return [self.generate_presigned_url(key) for key in offer.get('photo_keys', [])]
+        return []
+
+
+
     def _parse_ldjson(self, soup):
         ld_json_tag = soup.find('script', type='application/ld+json')
         result = {}
@@ -122,9 +173,12 @@ class CianParser:
                 result['description'] = data['description']
                 result['photos'] = data['image']
                 name = data.get('name', '')
-                rooms_match = re.search(r'(\d+)-комн', name)
-                if rooms_match:
-                    result['rooms'] = int(rooms_match.group(1))
+                if 'студия' in name.lower():
+                    result['rooms'] = 0
+                else:
+                    rooms_match = re.search(r'(\d+)-комн', name)
+                    if rooms_match:
+                        result['rooms'] = int(rooms_match.group(1))
                 area_match = re.search(r'([\d,]+)\s*м²', name)
                 if area_match:
                     area_str = area_match.group(1).replace(',', '.')
@@ -156,12 +210,21 @@ class CianParser:
                 else:
                     result['floor'] = None
                     result['floors_total'] = None
-            elif 'Жилая площадь' in key:
+            if 'Жилая площадь' in key:
                 result['area_living'] = float(value.split()[0].replace(',', '.'))
-            elif 'Площадь кухни' in key:
+            if 'Площадь кухни' in key:
                 result['area_kitchen'] = float(value.split()[0].replace(',', '.'))
-            elif 'Год постройки' in key:
+            if 'Год постройки' in key:
                 result['construction_year'] = int(value)
+            elif 'Год сдачи' in key:
+                result['construction_year'] = int(value)
+            if 'Комнат' in key:
+                if 'студия' in value.lower():
+                    result['rooms'] = 0
+                else:
+                    match = re.search(r'(\d+)', value)
+                    if match:
+                        result['rooms'] = int(match.group(1))
 
         return result
 
@@ -171,7 +234,7 @@ class CianParser:
             return ' '.join(addr_tag.stripped_strings).replace('На карте', '').strip()
         return ''
 
-    def _geocode_address(self, address: str) -> list | None:
+    def _geocode_address(self, address):
         if not address:
             return None
         url = "https://nominatim.openstreetmap.org/search"
@@ -188,13 +251,13 @@ class CianParser:
             if data:
                 lat = float(data[0]['lat'])
                 lon = float(data[0]['lon'])
-                return [lat, lon]
+                return {'lat': lat, 'lon': lon}
         except Exception as e:
             print(f"Ошибка Nominatim: {e}")
+            return {}
         finally:
-            time.sleep(1)
-        return None
-
+            time.sleep(2)
+        return {}
 
 
     def _parse_underground(self, soup):
@@ -229,24 +292,41 @@ class CianParser:
                     key = p_tags[0].get_text(strip=True)
                     value = p_tags[1].get_text(strip=True)
                     features[key] = value
+
+        if 'Высота потолков' in features:
+            val = features['Высота потолков']
+            match = re.search(r'([\d,]+)', val)
+            if match:
+                results['ceiling_height'] = float(match.group(1).replace(',', '.'))
+            else:
+                results['ceiling_height'] = None
+
+        if 'Подъезды' in features:
+            val = features['Подъезды']
+            match = re.search(r'\d+', val)
+            results['entrances'] = int(match.group()) if match else None
+
         if 'Тип жилья' in features:
             results['flat_type'] = features.get('Тип жилья', '')
-        if 'Высота потолков' in features:
-            results['ceiling_height'] = float(features.get('Высота потолков').split()[0].replace(',', '.'))
+
         if 'Ремонт' in features:
             results['renovation_type'] = features.get('Ремонт')
+
         if 'Парковка' in features:
             results['parking'] = features.get('Парковка')
+
         if 'Аварийность' in features:
             results['accident_rate'] = features.get('Аварийность')
+
         if 'Количество лифтов' in features:
-            results['elevators_count'] = features.get('Количество лифтов')
+            results['elevators'] = features['Количество лифтов']
+
         if 'Отопление' in features:
             results['heating'] = features.get('Отопление')
-        if 'Подъезды' in features:
-            results['entrances'] = features.get('Подъезды')
+
         if 'Санузел' in features:
             results['bathroom'] = features.get('Санузел')
+
         if 'Тип дома' in features:
             results['house_type'] = features.get('Тип дома')
 
@@ -260,18 +340,27 @@ class CianParser:
 
         result.update(self._parse_ldjson(soup))
         result.update(self._parse_factoids(soup))
+        result.update(self._parse_features(soup))
+
         address = self._parse_address(soup)
         if address:
             result['address'] = address
+            result['district'] = [i.strip() for i in address.split(',')][1]
             # lst = address.split(',')
             # address_for_geocode = ' '.join(lst[-2:] + [lst[0]])
-            # result['coordinates'] = self._geocode_address(address_for_geocode)
+            # result.update(self._geocode_address(address_for_geocode))
         metros = self._parse_underground(soup)
         if metros:
             result['metros'] = metros
-        if 'price' in result and 'area_total' in result and result['area_total'] > 0:
-            result['price_per_m2'] = round(result['price'] / result['area_total'])
-        result.update(self._parse_features(soup))
+
+
+        photo_keys = []
+        for idx, photo_url in enumerate(result['photos']):
+            key = self.upload_photo_to_b2(photo_url, result['id'], idx)
+            if key:
+                photo_keys.append(key)
+        result['photo_keys'] = photo_keys
+        del result['photos']
 
         return result
 
@@ -279,10 +368,10 @@ class CianParser:
 
     def get_ids_from_page(self, url):
         try:
-            self.page.goto(url, wait_until='domcontentloaded', timeout=15000)
+            self.page.goto(url, wait_until='domcontentloaded', timeout=22000)
             if self.page.query_selector('text=Ничего не найдено'):
                 return []
-            self.page.wait_for_selector('div[data-testid="offer-card"]', timeout=5000)
+            self.page.wait_for_selector('div[data-testid="offer-card"]', timeout=10000)
 
             last_count = 0
             while True:
@@ -365,13 +454,28 @@ class CianParser:
                     break
 
                 page += 1
-        print(f"Всего собрано уникальных ID: {len(all_ids)}")
+        print(f"Всего собрано ID: {len(all_ids)}")
         return list(all_ids)
 
 
 
+    def collect_new_ids(self):
+        old_ids = set()
+        if self.data_file.exists():
+            with open(self.data_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    old_ids.add(str(json.loads(line)['id']))
+
+        parsed_ids = set(self.collect_all_ids())
+
+        new_ids = list(parsed_ids - old_ids)
+        print(f"Новых ID для загрузки: {len(new_ids)}")
+        return new_ids
+
+
+
     def get_offer_page(self, offer_id):
-        time.sleep(random.uniform(2, 3))
+        time.sleep(random.uniform(3, 5))
         url = f"https://www.cian.ru/sale/flat/{offer_id}/"
         headers = {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
@@ -392,8 +496,9 @@ class CianParser:
             'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         ]
         headers['User-Agent'] = random.choice(user_agents)
+
         try:
-            response = self.session.get(url, headers=headers, timeout=20)
+            response = requests.get(url, headers=headers, timeout=20, impersonate='chrome120')
             response.raise_for_status()
             return response.text
         except Exception as e:
@@ -410,9 +515,9 @@ class CianParser:
 
 
 
-    def collect_offers(self, max_workers=2):
+    def collect_offers(self, max_workers=5):
         start_1 = time.time()
-        ids = self.collect_all_ids()
+        ids = self.collect_new_ids()
         print(f'Сборка id работала {(time.time() - start_1)/60:.2f} минут')
         all_offers = []
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
