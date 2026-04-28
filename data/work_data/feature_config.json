@@ -1,0 +1,39 @@
+{
+  "num_features": [
+    "rooms",
+    "area_total",
+    "area_living",
+    "area_kitchen",
+    "floor",
+    "floors_total",
+    "construction_year",
+    "metros_count",
+    "metros_min_time",
+    "building_age",
+    "area_per_room",
+    "ceiling_height",
+    "floor_ratio",
+    "kitchen_ratio",
+    "living_ratio",
+    "has_parking",
+    "has_elevator",
+    "is_new_building",
+    "elevators_int",
+    "bathroom_int"
+  ],
+  "cat_features": [
+    "district",
+    "flat_type",
+    "renovation_type",
+    "parking",
+    "house_type"
+  ],
+  "emb_columns": [],
+  "best_model_name": "Text Embeddings",
+  "target_column": "log_price",
+  "metrics": {
+    "r2": 0.934887253516974,
+    "mae": 7938660.341859389,
+    "mape": 13.145421812992641
+  }
+}
