@@ -15,7 +15,8 @@ Thumbs.db
 .env
 *.env
 
-data/
+#data/processed/cian_offers.parquet
+data/raw/cian_offers.jsonl
 
 tg_bot/bot.ipynb
 
