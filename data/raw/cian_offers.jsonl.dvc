@@ -1,0 +1,5 @@
+outs:
+- md5: 67908849a78c2c02fe5fb2c7517bc68e
+  size: 106675126
+  hash: md5
+  path: cian_offers.jsonl

@@ -1,0 +1,5 @@
+outs:
+- md5: 42779d2f9505079609553ac2fb8c4550
+  size: 36419149
+  hash: md5
+  path: cian_offers.parquet
