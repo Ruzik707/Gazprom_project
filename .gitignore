@@ -1,13 +1,10 @@
-# Виртуальное окружение
 .venv/
 venv/
 env/
 
-# Кеш Python
 __pycache__/
 *.pyc
 
-# Папки IDE
 .idea/
 .vscode/
 
@@ -15,9 +12,10 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Файлы с секретами (если будут)
 .env
 *.env
 
-# Директории с данными (если не хотим хранить в гите)
-#data/
+data/
+
+tg_bot/bot.ipynb
+

@@ -1,4 +1,10 @@
 [core]
-    remote = local_storage
+    remote = b2remote
 ['remote "local_storage"']
     url = /home/ruzel/dvc_storage
+[remote "b2remote"]
+    url = s3://Cian2026
+    endpointurl = https://s3.eu-central-003.backblazeb2.com
+    access_key_id = 003573c88890daf0000000001
+    secret_access_key = K003gIS7E9Vq34Ar3uztqe2Cyvl2KBA
+    region = eu-central-003
