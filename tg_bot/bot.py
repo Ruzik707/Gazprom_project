@@ -33,6 +33,7 @@ MODEL_PATH = os.getenv("MODEL_PATH", "tg_bot/models/best_model.cbm")
 PCA_PATH = os.getenv("PCA_PATH", "tg_bot/models/pca_model.pkl")
 DATASET_PATH = os.getenv("DATASET_PATH", "data/processed/clean_dataset.parquet")
 EMB_MODEL_NAME = os.getenv("EMB_MODEL_NAME", "BAAI/bge-m3")
+TEMPLATE_PATH = os.getenv("TEMPLATE_PATH", "tg_bot/templates/template.xlsx")
 
 # ==================== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ====================
 bot = Bot(token=TOKEN)
@@ -363,7 +364,7 @@ async def start_evaluation(message: Message, state: FSMContext):
     """Отправляем шаблон и ждем файл"""
     await state.set_state(UploadForm.waiting_for_file)
 
-    template = FSInputFile("/content/drive/MyDrive/PriceVision/Шаблон.xlsx")
+    template = FSInputFile(TEMPLATE_PATH)
     await bot.send_document(
         message.chat.id,
         template,
@@ -637,3 +638,6 @@ async def main():
 
     print("🤖 Бот запущен! Ожидаю сообщения...")
     await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
