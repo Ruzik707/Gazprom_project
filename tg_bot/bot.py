@@ -29,10 +29,10 @@ logger = logging.getLogger(__name__)
 # ==================== КОНФИГУРАЦИЯ ====================
 TOKEN = os.getenv('BOT_TOKEN')
 
-MODEL_PATH = "/content/drive/MyDrive/PriceVision/best_model.cbm"
-PCA_PATH = "/content/drive/MyDrive/PriceVision/pca_model.pkl"
-DATASET_PATH = "/content/drive/MyDrive/PriceVision/clean_dataset.parquet"
-EMB_MODEL_NAME = "BAAI/bge-m3"
+MODEL_PATH = os.getenv("MODEL_PATH", "../models/best_model.cbm")
+PCA_PATH = os.getenv("PCA_PATH", "../models/pca_model.pkl")
+DATASET_PATH = os.getenv("DATASET_PATH", "data/processed/clean_dataset.parquet")
+EMB_MODEL_NAME = os.getenv("EMB_MODEL_NAME", "BAAI/bge-m3")
 
 # ==================== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ====================
 bot = Bot(token=TOKEN)

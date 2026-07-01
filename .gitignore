@@ -15,8 +15,12 @@ Thumbs.db
 .env
 *.env
 
-#data/processed/cian_offers.parquet
+data/processed/cian_offers.parquet
 data/raw/cian_offers.jsonl
+data/work_data/clean_dataset.parquet
+
 
 tg_bot/bot.ipynb
+dvc cache clean
 
+PriceVision.pptx
