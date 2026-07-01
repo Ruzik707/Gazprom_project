@@ -28,12 +28,12 @@ logger = logging.getLogger(__name__)
 
 # ==================== КОНФИГУРАЦИЯ ====================
 TOKEN = os.getenv('BOT_TOKEN')
-
+ь
 MODEL_PATH = os.getenv("MODEL_PATH", "tg_bot/models/best_model.cbm")
 PCA_PATH = os.getenv("PCA_PATH", "tg_bot/models/pca_model.pkl")
 DATASET_PATH = os.getenv("DATASET_PATH", "data/processed/clean_dataset.parquet")
 EMB_MODEL_NAME = os.getenv("EMB_MODEL_NAME", "BAAI/bge-m3")
-TEMPLATE_PATH = os.getenv("TEMPLATE_PATH", "tg_bot/templates/template.xlsx")
+TEMPLATE_PATH = os.getenv("TEMPLATE_PATH", "docs/Шаблон.xlsx")
 
 # ==================== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ====================
 bot = Bot(token=TOKEN)
