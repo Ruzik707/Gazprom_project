@@ -27,13 +27,16 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # ==================== КОНФИГУРАЦИЯ ====================
-TOKEN = os.getenv('BOT_TOKEN')
-ь
+TOKEN = os.getenv("BOT_TOKEN")
+
+if TOKEN is None:
+    raise RuntimeError("BOT_TOKEN is not set. Add it to .env file.")
+
 MODEL_PATH = os.getenv("MODEL_PATH", "tg_bot/models/best_model.cbm")
 PCA_PATH = os.getenv("PCA_PATH", "tg_bot/models/pca_model.pkl")
-DATASET_PATH = os.getenv("DATASET_PATH", "data/processed/clean_dataset.parquet")
-EMB_MODEL_NAME = os.getenv("EMB_MODEL_NAME", "BAAI/bge-m3")
+DATASET_PATH = os.getenv("DATASET_PATH", "tg_bot/models/clean_dataset.parquet")
 TEMPLATE_PATH = os.getenv("TEMPLATE_PATH", "docs/Шаблон.xlsx")
+EMB_MODEL_NAME = os.getenv("EMB_MODEL_NAME", "BAAI/bge-m3")
 
 # ==================== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ====================
 bot = Bot(token=TOKEN)
