@@ -15,6 +15,10 @@ Thumbs.db
 .env
 *.env
 
+# Локальные настройки DVC с учётными данными
+.dvc/config.local
+.dvc_backup/config.local
+
 data/processed/cian_offers.parquet
 data/raw/cian_offers.jsonl
 data/work_data/clean_dataset.parquet

@@ -241,20 +241,10 @@ def format_price(price: float) -> str:
     return f"{price:,.0f} ₽".replace(",", " ")
 
 
-def get_confidence_message(r2_score: float = 0.93) -> str:
-    """Возвращает сообщение об уверенности модели"""
-    if r2_score > 0.9:
-        return "✨ Высокая уверенность в результате"
-    elif r2_score > 0.8:
-        return "📊 Средняя уверенность в результате"
-    else:
-        return "🔍 Оценка приблизительная"
-
-
 def predict_price(user_input: dict) -> dict:
     """
     Главная функция предсказания.
-    Возвращает dict с ценой, доверием и дополнительными данными.
+    Возвращает dict с ценой и пояснением к оценке.
     """
     global catboost_model, pca_model, text_model
 
@@ -290,8 +280,7 @@ def predict_price(user_input: dict) -> dict:
             "success": True,
             "price": round(price),
             "price_formatted": format_price(price),
-            "confidence": "high" if price > 5_000_000 else "medium",
-            "message": get_confidence_message()
+            "message": "🔍 Приблизительная оценка модели. Интервал неопределённости для этой квартиры не рассчитывается."
         }
 
     except Exception as e:
